@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+
+curl --unix-socket /tmp/docker.sock -XPOST http://${DOCKER_ENGINE_VERSION}/containers/$1/restart
