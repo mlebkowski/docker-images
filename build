@@ -27,7 +27,7 @@ build_image() {
     if is_clean "$path"; then
         build_date=$(git log -n1 --date=format:"%Y-%m-%dT%H:%M:%SZ" --pretty=format:"%ad" "$path")
         build_tag=$(git rev-parse --abbrev-ref HEAD)
-        build_ref=$(git rev-parse HEAD)
+        build_ref=$(git log  -n1 --pretty=format:"%h" "$path")
     fi
 
     echo " • Build date:" $(green $build_date)
@@ -38,9 +38,9 @@ build_image() {
     local target_image="${path}:${build_tag}"
     local latest_image="${path}:latest"
 
-    docker build -t "$build_image" $path
+    docker build -q -t "$build_image" $path
 
-    echo "FROM $build_image" | docker build \
+    echo "FROM $build_image" | docker build -q \
         --label org.label-schema.schema-version="1.0" \
         --label org.label-schema.build-date=$build_date \
         --label org.label-schema.version=$build_tag \
@@ -49,11 +49,16 @@ build_image() {
         -t $target_image -
 
     if is_clean "$path"; then
-        docker tag $target_image $latest_image
-        echo "Pushing" $(lightblue $target_image)
-        docker push $target_image
-        echo "Pushing" $(lightblue $latest_image)
-        docker push $latest_image
+        if [ $(docker images -q $target_image) = $(docker images -q $latest_image) ]; then
+            echo " #" $(yellow $target_image) is already the same as $(yellow $latest_image)
+        else
+
+            docker tag $target_image $latest_image
+            echo "Pushing" $(lightblue $target_image)
+            docker push $target_image
+            echo "Pushing" $(lightblue $latest_image)
+            docker push $latest_image
+        fi
     fi
 }
 
