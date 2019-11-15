@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+set -eou pipefail
+
+. colors.fun
+
+DOCKER_BUILD_TAG=build
+is_clean() {
+    declare path=$1
+
+    if [ -z "$(git status --porcelain "${path}")" ]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+build_image() {
+    declare path=$(dirname $1| cut -b 3-)
+
+    echo "Building" $(lightblue $path)
+
+    local build_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local build_tag=latest
+    local build_ref=HEAD
+
+    if is_clean "$path"; then
+        build_date=$(git log "$path" -n1 --date=format:"%Y-%m-%dT%H:%M:%SZ" --pretty=format:"%ad")
+        build_tag=$(git rev-parse --abrev-ref HEAD)
+        build_ref=$(git rev-parse HEAD)
+    fi
+
+    echo " • Build date:" $(green $build_date)
+    echo " • Build tag:" $(green $build_tag)
+    echo " • Build ref:" $(green $build_ref)
+
+    local build_image="${path}:${DOCKER_BUILD_TAG}"
+    local target_image="${path}:${build_tag}"
+
+    docker build -t "$build_image" $path
+
+    echo "FROM $build_image" | docker build \
+        --label org.label-schema.schema-version="1.0" \
+        --label org.label-schema.build-date=$build_date \
+        --label org.label-schema.version=$build_tag \
+        --label org.label-schema.vcs-ref=$build_ref \
+        --label org.label-schema.vcs-url=$(git config --get remote.origin.url) \
+        -t $target_image -
+
+    if is_clean "$path"; then
+        docker tag $target_image $path:latest
+        docker push $target_image
+        docker push $path:latest
+    fi
+}
+
+main() {
+    find . -name Dockerfile | while read path; do
+        build_image "$path"
+    done
+}
+
+main "$@"
