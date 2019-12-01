@@ -63,9 +63,12 @@ build_image() {
 }
 
 main() {
-    find . -name Dockerfile | while read path; do
+    declare filter=${1:-Dockerfile} #hack
+
+    find . -name Dockerfile | grep "$filter" |  while read path; do
         build_image "$path"
     done
 }
 
 main "$@"
+
