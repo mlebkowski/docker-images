@@ -5,6 +5,8 @@ set -eou pipefail
 . colors.fun
 
 DOCKER_BUILD_TAG=build
+DOCKER_LATEST_TAG=latest
+
 is_clean() {
     declare path=$1
 
@@ -15,57 +17,93 @@ is_clean() {
     return 1
 }
 
+image_changed() {
+    declare image=$1 expected_sha=$2
+
+    test $(docker images -q "$image") != "$expected_sha"
+}
+
+get_image_tags() {
+    declare path=$1
+
+    local tags_file="${path}/.versions"
+
+    if [[ -f "$tags_file" ]]; then
+        cat "$tags_file"
+    fi
+
+    echo $DOCKER_LATEST_TAG
+}
+
 build_image() {
     declare path=$(dirname $1| cut -b 3-)
 
     echo "Building" $(lightblue $path)
 
     local build_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local build_tag=latest
+    local build_tag_suffix="-dirty"
     local build_ref=HEAD
 
     if is_clean "$path"; then
         build_date=$(git log -n1 --date=format:"%Y-%m-%dT%H:%M:%SZ" --pretty=format:"%ad" "$path")
-        build_tag=$(git rev-parse --abbrev-ref HEAD)
+        build_tag_suffix=""
         build_ref=$(git log  -n1 --pretty=format:"%h" "$path")
     fi
 
     echo " • Build date:" $(green $build_date)
-    echo " • Build tag:" $(green $build_tag)
     echo " • Build ref:" $(green $build_ref)
+    echo "   --------------------- "
 
-    local build_image="${path}:${DOCKER_BUILD_TAG}"
-    local target_image="${path}:${build_tag}"
-    local latest_image="${path}:latest"
+    get_image_tags "$path" | while read VERSION; do
+        echo "     › Build version:" $(green $VERSION)
 
-    docker build -q -t "$build_image" $path
+        local target_image="${path}:${VERSION}${build_tag_suffix}"
+        local current_sha=$(docker images -q "$target_image")
+
+        build_image_tag "$path" "$target_image" "$VERSION" "$build_date" "$build_ref"
+
+        if is_clean "$path" && image_changed "$target_image" "$current_sha"; then
+            echo "     » Pushing" $(lightblue $target_image)
+            docker push $target_image
+        fi
+    done
+
+}
+
+build_image_tag() {
+    declare path=$1 target_image=$2 tag=$3 date=$4 ref=$5
+
+    local build_image="${target_image}-${DOCKER_BUILD_TAG}"
+
+    local arg=$([[ "$tag" != "$DOCKER_LATEST_TAG" ]] && echo "--build-arg VERSION=$tag" || :)
+
+    docker build $arg -q -t "$build_image" "$path" >/dev/null
 
     echo "FROM $build_image" | docker build -q \
         --label org.label-schema.schema-version="1.0" \
-        --label org.label-schema.build-date=$build_date \
-        --label org.label-schema.version=$build_tag \
-        --label org.label-schema.vcs-ref=$build_ref \
+        --label org.label-schema.build-date=$date \
+        --label org.label-schema.version=$tag \
+        --label org.label-schema.vcs-ref=$ref \
         --label org.label-schema.vcs-url=$(git config --get remote.origin.url) \
-        -t $target_image -
+        -t $target_image - >/dev/null
 
-    if is_clean "$path"; then
-        if [ $(docker images -q $target_image) = $(docker images -q $latest_image) ]; then
-            echo " #" $(yellow $target_image) is already the same as $(yellow $latest_image)
-        else
+    docker rmi "$build_image" >/dev/null
+}
 
-            docker tag $target_image $latest_image
-            echo "Pushing" $(lightblue $target_image)
-            docker push $target_image
-            echo "Pushing" $(lightblue $latest_image)
-            docker push $latest_image
-        fi
-    fi
+filter() {
+    declare filter="$1"
+
+    if [[ -n "$filter" ]]; then
+        grep "$filter"
+    else
+        cat
+    fi 
 }
 
 main() {
-    declare filter=${1:-Dockerfile} #hack
+    declare filter=${1:-} 
 
-    find . -name Dockerfile | grep "$filter" |  while read path; do
+    find . -name Dockerfile | filter "$filter" |  while read path; do
         build_image "$path"
     done
 }
