@@ -11,8 +11,8 @@ RUN yum install -y \
     ca-certificates \
     sqlite   
 
-ARG PHP_VERSION=72
-RUN yum --enablerepo=remi-php${PHP_VERSION} -y install \
+ARG VERSION=74
+RUN yum --enablerepo=remi-php${VERSION} -y install \
     composer \
     php-bcmath \
     php-cli \
